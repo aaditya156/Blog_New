@@ -29,6 +29,7 @@ export interface BlogItem {
   authorAvatar?: string;
   views: number;
   likes: string[];
+  semanticScore?: number;
   createdAt: string;
   updatedAt: string;
 }

@@ -33,9 +33,14 @@ export const cosineSimilarity = (vecA: number[], vecB: number[]): number => {
 // @desc   Get semantic personalized recommendation feed using ChromaDB and cosine similarity
 // @route  POST /api/v1/blog/semantic-feed or GET /api/v1/blog/semantic-feed
 export const getSemanticPersonalizedFeed = TryCatch(async (req: Request, res: Response) => {
-  // Support userVector from req.body or req.query
   let userVector: number[] | null = null;
+  const excludeIds = new Set<string>();
+  const requestedLimit = Math.min(
+    50,
+    Math.max(1, parseInt((req.query.limit as string) || (req.body?.limit as string) || "6", 10))
+  );
 
+  // 1. Direct userVector from body or query
   if (req.body && Array.isArray(req.body.userVector)) {
     userVector = req.body.userVector.map((v: any) => Number(v)).filter((v: any) => !isNaN(v));
   } else if (req.query.userVector) {
@@ -55,24 +60,80 @@ export const getSemanticPersonalizedFeed = TryCatch(async (req: Request, res: Re
     }
   }
 
-  // If user vector provided, query ChromaDB first for fast ANN search
+  // 2. Single blogId (e.g., "Related Articles" on Blog Detail page)
+  const singleBlogId = (req.query.blogId as string) || req.body?.blogId;
+  if (!userVector && singleBlogId) {
+    excludeIds.add(singleBlogId);
+    const targetBlog = await Blog.findById(singleBlogId).lean();
+    if (targetBlog && targetBlog.embedding && targetBlog.embedding.length > 0) {
+      userVector = targetBlog.embedding;
+    }
+  }
+
+  // 3. Array of blogIds (e.g., liked or recently read blogs history)
+  let historyBlogIds: string[] = [];
+  if (req.body && Array.isArray(req.body.blogIds)) {
+    historyBlogIds = req.body.blogIds;
+  } else if (req.query.blogIds) {
+    try {
+      const parsed = JSON.parse(req.query.blogIds as string);
+      if (Array.isArray(parsed)) historyBlogIds = parsed;
+    } catch {
+      historyBlogIds = (req.query.blogIds as string).split(",").map((s) => s.trim());
+    }
+  }
+
+  if (!userVector && historyBlogIds.length > 0) {
+    historyBlogIds.forEach((id) => excludeIds.add(id));
+    const historyBlogs = await Blog.find({ _id: { $in: historyBlogIds }, isPublished: true }).lean();
+    const validEmbeddings = historyBlogs
+      .map((b) => b.embedding)
+      .filter((e) => Array.isArray(e) && e.length === 384);
+
+    if (validEmbeddings.length > 0) {
+      // Mean-pooling: compute centroid of user's interaction embeddings
+      const centroid = new Array(384).fill(0);
+      for (const emb of validEmbeddings) {
+        for (let i = 0; i < 384; i++) {
+          centroid[i] += emb[i];
+        }
+      }
+      // L2 Normalize
+      const norm = Math.sqrt(centroid.reduce((acc, val) => acc + val * val, 0)) || 1;
+      userVector = centroid.map((val) => val / norm);
+    }
+  }
+
+  // 4. Default seed vector if user has no history yet (e.g. use top trending article's embedding)
+  if (!userVector) {
+    const topBlog = await Blog.findOne({ isPublished: true, "embedding.0": { $exists: true } })
+      .sort({ score: -1, views: -1 })
+      .lean();
+    if (topBlog && topBlog.embedding && topBlog.embedding.length > 0) {
+      userVector = topBlog.embedding;
+    }
+  }
+
+  // Query ChromaDB first for fast ANN search
   if (userVector && userVector.length > 0) {
     try {
-      const chromaMatches = await querySimilarBlogsFromChroma(userVector, 20);
+      const chromaMatches = await querySimilarBlogsFromChroma(userVector, requestedLimit + excludeIds.size + 10);
 
       if (chromaMatches && chromaMatches.length > 0) {
-        const blogIds = chromaMatches.map((m) => m.id);
-        const blogs = await Blog.find({ _id: { $in: blogIds }, isPublished: true }).lean();
+        // Filter out excluded blog IDs (e.g. the article currently being read)
+        const filteredMatches = chromaMatches.filter((m) => !excludeIds.has(m.id)).slice(0, requestedLimit);
 
-        // Create ID to blog map and attach semantic score
+        const matchIds = (filteredMatches.length > 0 ? filteredMatches : chromaMatches.slice(0, requestedLimit)).map((m) => m.id);
+        const blogs = await Blog.find({ _id: { $in: matchIds }, isPublished: true }).lean();
+
         const blogMap = new Map(blogs.map((b) => [b._id.toString(), b]));
-        const orderedBlogs = chromaMatches
+        const orderedBlogs = (filteredMatches.length > 0 ? filteredMatches : chromaMatches.slice(0, requestedLimit))
           .map((match) => {
             const blog = blogMap.get(match.id);
             if (!blog) return null;
             return {
               ...blog,
-              semanticScore: match.similarity,
+              semanticScore: Math.max(0, Math.min(1, match.similarity)),
               distance: match.distance,
             };
           })
@@ -95,6 +156,7 @@ export const getSemanticPersonalizedFeed = TryCatch(async (req: Request, res: Re
     const blogs = await Blog.find({ isPublished: true }).lean();
 
     const scoredBlogs = blogs
+      .filter((blog) => !excludeIds.has(blog._id.toString()))
       .map((blog) => {
         const similarity =
           blog.embedding && Array.isArray(blog.embedding) && blog.embedding.length > 0
@@ -102,11 +164,11 @@ export const getSemanticPersonalizedFeed = TryCatch(async (req: Request, res: Re
             : 0;
         return {
           ...blog,
-          semanticScore: similarity,
+          semanticScore: Math.max(0, Math.min(1, similarity)),
         };
       })
       .sort((a, b) => b.semanticScore - a.semanticScore)
-      .slice(0, 20);
+      .slice(0, requestedLimit);
 
     return res.status(200).json({
       success: true,
@@ -116,10 +178,10 @@ export const getSemanticPersonalizedFeed = TryCatch(async (req: Request, res: Re
     });
   }
 
-  // Fallback to traditional score-based sorting if no user vector is provided
+  // Fallback to traditional score-based sorting if no vector could be established
   const fallbackBlogs = await Blog.find({ isPublished: true })
     .sort({ score: -1, views: -1, createdAt: -1 })
-    .limit(20)
+    .limit(requestedLimit)
     .lean();
 
   return res.status(200).json({

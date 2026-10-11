@@ -2,7 +2,7 @@ import React from "react";
 import Link from "next/link";
 import { BlogItem } from "../context/AppContext";
 import { formatDate, calculateReadingTime } from "../lib/utils";
-import { Eye, Heart, Calendar, ArrowUpRight } from "lucide-react";
+import { Eye, Heart, Calendar, ArrowUpRight, Sparkles } from "lucide-react";
 
 interface BlogCardProps {
   blog: BlogItem;
@@ -19,10 +19,16 @@ export const BlogCard: React.FC<BlogCardProps> = ({ blog }) => {
           className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
         />
         <div className="absolute inset-0 bg-gradient-to-t from-black/40 via-transparent to-transparent opacity-60" />
-        <div className="absolute top-3 left-3">
+        <div className="absolute top-3 left-3 flex items-center gap-1.5 flex-wrap">
           <span className="px-3 py-1 rounded-full text-xs font-semibold bg-white/95 text-indigo-700 backdrop-blur-md shadow-xs border border-white/60">
             {blog.category || "Technology"}
           </span>
+          {typeof blog.semanticScore === "number" && blog.semanticScore > 0 && (
+            <span className="flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-bold bg-gradient-to-r from-purple-600 to-indigo-600 text-white backdrop-blur-md shadow-xs">
+              <Sparkles className="w-3 h-3 text-amber-300" />
+              {Math.round(blog.semanticScore * 100)}% Match
+            </span>
+          )}
         </div>
       </div>
 

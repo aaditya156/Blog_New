@@ -4,6 +4,7 @@ import React, { useState, useEffect } from "react";
 import axios from "axios";
 import { useApp, BlogItem } from "../../context/AppContext";
 import { BlogCard } from "../../components/BlogCard";
+import { getUserInteractionBlogIds } from "../../lib/recommendations";
 import { Search, Filter, Sparkles, BookOpen } from "lucide-react";
 
 export default function BlogsExplorePage() {
@@ -12,7 +13,10 @@ export default function BlogsExplorePage() {
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedCategory, setSelectedCategory] = useState("All");
-  const [categories, setCategories] = useState<string[]>(["All"]);
+  const [categories, setCategories] = useState<string[]>([
+    "All",
+    "AI Recommended",
+  ]);
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
 
@@ -21,12 +25,28 @@ export default function BlogsExplorePage() {
       try {
         const res = await axios.get(`${BLOG_API}/categories`);
         if (res.data.success && res.data.categories.length > 0) {
-          setCategories(["All", ...res.data.categories]);
+          setCategories(["All", "AI Recommended", ...res.data.categories]);
         } else {
-          setCategories(["All", "Technology", "Design", "AI & ML", "Architecture", "Engineering"]);
+          setCategories([
+            "All",
+            "AI Recommended",
+            "Technology",
+            "System Design",
+            "Web Development",
+            "AI & Machine Learning",
+            "DevOps",
+          ]);
         }
       } catch (err) {
-        setCategories(["All", "Technology", "Design", "AI & ML", "Architecture", "Engineering"]);
+        setCategories([
+          "All",
+          "AI Recommended",
+          "Technology",
+          "System Design",
+          "Web Development",
+          "AI & Machine Learning",
+          "DevOps",
+        ]);
       }
     };
     fetchCategories();
@@ -36,9 +56,25 @@ export default function BlogsExplorePage() {
     const fetchBlogs = async () => {
       setLoading(true);
       try {
+        // If "AI Recommended" is selected, query the semantic feed endpoint
+        if (selectedCategory === "AI Recommended") {
+          const interactionIds = getUserInteractionBlogIds();
+          const res = await axios.post(`${BLOG_API}/semantic-feed`, {
+            blogIds: interactionIds,
+            limit: 9,
+          });
+
+          if (res.data.success && res.data.blogs) {
+            setBlogs(res.data.blogs);
+            setTotalPages(1);
+          }
+          return;
+        }
+
         const params = new URLSearchParams();
         if (searchTerm) params.append("search", searchTerm);
-        if (selectedCategory && selectedCategory !== "All") params.append("category", selectedCategory);
+        if (selectedCategory && selectedCategory !== "All")
+          params.append("category", selectedCategory);
         params.append("page", page.toString());
         params.append("limit", "9");
 
@@ -67,7 +103,7 @@ export default function BlogsExplorePage() {
           Explore Publications
         </h1>
         <p className="text-sm text-slate-600 max-w-2xl">
-          Discover stories, system architectures, and technical deep-dives aggregated in real-time across microservices.
+          Discover stories, system architectures, and technical deep-dives aggregated in real-time across microservices and ChromaDB AI vector search.
         </p>
       </div>
 
@@ -90,22 +126,32 @@ export default function BlogsExplorePage() {
         {/* Category Pills */}
         <div className="flex items-center gap-2 overflow-x-auto pb-2 md:pb-0 scrollbar-none">
           <Filter className="w-4 h-4 text-slate-400 hidden sm:block shrink-0 ml-2" />
-          {categories.map((cat) => (
-            <button
-              key={cat}
-              onClick={() => {
-                setSelectedCategory(cat);
-                setPage(1);
-              }}
-              className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition ${
-                selectedCategory === cat
-                  ? "bg-indigo-600 text-white shadow-xs"
-                  : "bg-slate-100 text-slate-600 hover:text-slate-900 hover:bg-slate-200/80 border border-transparent"
-              }`}
-            >
-              {cat}
-            </button>
-          ))}
+          {categories.map((cat) => {
+            const isAI = cat === "AI Recommended";
+            const isSelected = selectedCategory === cat;
+
+            return (
+              <button
+                key={cat}
+                onClick={() => {
+                  setSelectedCategory(cat);
+                  setPage(1);
+                }}
+                className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition ${
+                  isSelected
+                    ? isAI
+                      ? "bg-gradient-to-r from-purple-600 to-indigo-600 text-white shadow-xs"
+                      : "bg-indigo-600 text-white shadow-xs"
+                    : isAI
+                    ? "bg-purple-50 text-purple-700 hover:bg-purple-100 border border-purple-200"
+                    : "bg-slate-100 text-slate-600 hover:text-slate-900 hover:bg-slate-200/80 border border-transparent"
+                }`}
+              >
+                {isAI && <Sparkles className="w-3.5 h-3.5 text-purple-400" />}
+                <span>{cat}</span>
+              </button>
+            );
+          })}
         </div>
       </div>
 
@@ -113,7 +159,10 @@ export default function BlogsExplorePage() {
       {loading ? (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           {[1, 2, 3, 4, 5, 6].map((i) => (
-            <div key={i} className="h-80 rounded-2xl bg-white animate-pulse border border-slate-200 shadow-xs" />
+            <div
+              key={i}
+              className="h-80 rounded-2xl bg-white animate-pulse border border-slate-200 shadow-xs"
+            />
           ))}
         </div>
       ) : blogs.length > 0 ? (
@@ -125,13 +174,17 @@ export default function BlogsExplorePage() {
       ) : (
         <div className="text-center py-20 bg-white rounded-2xl border border-dashed border-slate-200 shadow-xs">
           <Sparkles className="w-10 h-10 text-slate-400 mx-auto mb-3" />
-          <p className="text-base text-slate-800 font-semibold">No publications found</p>
-          <p className="text-xs text-slate-500 mt-1">Try adjusting your search query or selecting another category.</p>
+          <p className="text-base text-slate-800 font-semibold">
+            No publications found
+          </p>
+          <p className="text-xs text-slate-500 mt-1">
+            Try adjusting your search query or selecting another category.
+          </p>
         </div>
       )}
 
       {/* Pagination Controls */}
-      {totalPages > 1 && (
+      {totalPages > 1 && selectedCategory !== "AI Recommended" && (
         <div className="flex justify-center items-center gap-3 pt-6">
           <button
             disabled={page <= 1}

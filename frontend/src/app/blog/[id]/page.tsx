@@ -7,6 +7,8 @@ import axios from "axios";
 import { useApp, BlogItem } from "../../../context/AppContext";
 import { formatDate, calculateReadingTime } from "../../../lib/utils";
 import MarkdownRenderer from "../../../components/MarkdownRenderer";
+import { BlogCard } from "../../../components/BlogCard";
+import { trackBlogRead, trackBlogLiked } from "../../../lib/recommendations";
 import {
   Heart,
   Calendar,
@@ -20,6 +22,7 @@ import {
   Sparkles,
   ChevronRight,
   User,
+  Compass,
 } from "lucide-react";
 
 export default function BlogDetailPage() {
@@ -28,6 +31,8 @@ export default function BlogDetailPage() {
   const { BLOG_API, token, user } = useApp();
 
   const [blog, setBlog] = useState<BlogItem | null>(null);
+  const [relatedBlogs, setRelatedBlogs] = useState<BlogItem[]>([]);
+  const [relatedLoading, setRelatedLoading] = useState(false);
   const [loading, setLoading] = useState(true);
   const [isLiked, setIsLiked] = useState(false);
   const [likesCount, setLikesCount] = useState(0);
@@ -63,6 +68,24 @@ export default function BlogDetailPage() {
           if (user && blogData.likes?.includes(user._id)) {
             setIsLiked(true);
           }
+
+          // Track this post as read in client recommendation history
+          trackBlogRead(id as string);
+
+          // Fetch semantically similar articles using ChromaDB vector search
+          try {
+            setRelatedLoading(true);
+            const relatedRes = await axios.get(
+              `${BLOG_API}/semantic-feed?blogId=${id}&limit=3`
+            );
+            if (relatedRes.data.success && relatedRes.data.blogs?.length > 0) {
+              setRelatedBlogs(relatedRes.data.blogs);
+            }
+          } catch (rErr) {
+            console.warn("Failed to fetch related semantic blogs:", rErr);
+          } finally {
+            setRelatedLoading(false);
+          }
         }
       } catch (err) {
         console.error("Failed to fetch blog post", err);
@@ -95,6 +118,7 @@ export default function BlogDetailPage() {
       if (res.data.success) {
         setIsLiked(res.data.isLiked);
         setLikesCount(res.data.likesCount);
+        trackBlogLiked(blog._id, res.data.isLiked);
       }
     } catch (err) {
       console.error("Failed to like blog", err);
@@ -326,6 +350,32 @@ export default function BlogDetailPage() {
               ))}
             </div>
           </div>
+        )}
+
+        {/* Semantically Similar Publications Section */}
+        {relatedBlogs && relatedBlogs.length > 0 && (
+          <section className="space-y-6 pt-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+              <div>
+                <div className="flex items-center gap-1.5 text-xs font-bold text-indigo-600 uppercase tracking-wider mb-1">
+                  <Sparkles className="w-4 h-4 text-purple-600 animate-pulse" />
+                  <span>AI Vector Recommendation • ChromaDB</span>
+                </div>
+                <h3 className="text-xl sm:text-2xl font-black text-slate-900 tracking-tight">
+                  Related Publications You Might Like
+                </h3>
+              </div>
+              <span className="text-xs text-slate-500 font-medium">
+                Matched via 384-dimensional cosine similarity
+              </span>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+              {relatedBlogs.map((relBlog) => (
+                <BlogCard key={relBlog._id} blog={relBlog} />
+              ))}
+            </div>
+          </section>
         )}
 
         {/* Author Bio Showcase Card */}
