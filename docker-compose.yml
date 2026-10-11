@@ -1,0 +1,165 @@
+services:
+  # ----------------------------------------------------
+  # Infrastructure: MongoDB
+  # ----------------------------------------------------
+  mongo:
+    image: mongo:6.0
+    container_name: blog_mongodb
+    restart: always
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_data:/data/db
+    networks:
+      - blog_network
+
+  # ----------------------------------------------------
+  # Infrastructure: RabbitMQ Message Broker
+  # ----------------------------------------------------
+  rabbitmq:
+    image: rabbitmq:3-management-alpine
+    container_name: blog_rabbitmq
+    restart: always
+    ports:
+      - "5672:5672"     # AMQP protocol
+      - "15672:15672"   # RabbitMQ Management Web UI
+    environment:
+      RABBITMQ_DEFAULT_USER: guest
+      RABBITMQ_DEFAULT_PASS: guest
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    networks:
+      - blog_network
+
+  # ----------------------------------------------------
+  # Infrastructure: ChromaDB Vector Database
+  # ----------------------------------------------------
+  chromadb:
+    image: chromadb/chroma:latest
+    container_name: blog_chromadb
+    restart: always
+    ports:
+      - "8005:8000"
+    environment:
+      - IS_PERSISTENT=TRUE
+      - PERSIST_DIRECTORY=/chroma/chroma
+      - ANONYMIZED_TELEMETRY=FALSE
+    volumes:
+      - chroma_data:/chroma/chroma
+    networks:
+      - blog_network
+
+  # ----------------------------------------------------
+  # Service: User Microservice
+  # ----------------------------------------------------
+  user-service:
+    build:
+      context: ./services/user
+      dockerfile: Dockerfile
+    container_name: user_service
+    restart: always
+    ports:
+      - "4001:4001"
+    environment:
+      PORT: 4001
+      MONGO_URI: mongodb://mongo:27017/blog_user_db
+      JWT_SECRET: supersecretjwtkey123
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672
+      CLIENT_URL: http://localhost:3000
+      CLOUDINARY_CLOUD_NAME: oikuwsgd
+      CLOUDINARY_API_KEY: 286656294931583
+      CLOUDINARY_API_SECRET: zn4r1DfNeoVmISOLot2GT-hp85Y
+      GOOGLE_CLIENT_ID: 681297892171-akjh6irn2la3ndglnvnq675sbtfkhov1.apps.googleusercontent.com
+      GOOGLE_CLIENT_SECRET: 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
+    depends_on:
+      - mongo
+      - rabbitmq
+    networks:
+      - blog_network
+
+  # ----------------------------------------------------
+  # Service: Author Microservice
+  # ----------------------------------------------------
+  author-service:
+    build:
+      context: ./services/author
+      dockerfile: Dockerfile
+    container_name: author_service
+    restart: always
+    ports:
+      - "4002:4002"
+    environment:
+      PORT: 4002
+      MONGO_URI: mongodb://mongo:27017/blog_author_db
+      JWT_SECRET: supersecretjwtkey123
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672
+      CLIENT_URL: http://localhost:3000
+      CLOUDINARY_CLOUD_NAME: oikuwsgd
+      CLOUDINARY_API_KEY: 286656294931583
+      CLOUDINARY_API_SECRET: zn4r1DfNeoVmISOLot2GT-hp85Y
+      GOOGLE_CLIENT_ID: 681297892171-akjh6irn2la3ndglnvnq675sbtfkhov1.apps.googleusercontent.com
+      GOOGLE_CLIENT_SECRET: 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
+    depends_on:
+      - mongo
+      - rabbitmq
+    networks:
+      - blog_network
+
+  # ----------------------------------------------------
+  # Service: Blog Microservice
+  # ----------------------------------------------------
+  blog-service:
+    build:
+      context: ./services/blog
+      dockerfile: Dockerfile
+    container_name: blog_service
+    restart: always
+    ports:
+      - "4003:4003"
+    environment:
+      PORT: 4003
+      MONGO_URI: mongodb://mongo:27017/blog_read_db
+      JWT_SECRET: supersecretjwtkey123
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672
+      CHROMA_URL: http://chromadb:8000
+      CLIENT_URL: http://localhost:3000
+      CLOUDINARY_CLOUD_NAME: oikuwsgd
+      CLOUDINARY_API_KEY: 286656294931583
+      CLOUDINARY_API_SECRET: zn4r1DfNeoVmISOLot2GT-hp85Y
+    depends_on:
+      - mongo
+      - rabbitmq
+      - chromadb
+    networks:
+      - blog_network
+
+  # ----------------------------------------------------
+  # Frontend: Next.js Client
+  # ----------------------------------------------------
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: blog_frontend
+    restart: always
+    ports:
+      - "3000:3000"
+    environment:
+      NEXT_PUBLIC_USER_SERVICE_URL: http://localhost:4001/api/v1/user
+      NEXT_PUBLIC_AUTHOR_SERVICE_URL: http://localhost:4002/api/v1/author
+      NEXT_PUBLIC_BLOG_SERVICE_URL: http://localhost:4003/api/v1/blog
+    depends_on:
+      - user-service
+      - author-service
+      - blog-service
+    networks:
+      - blog_network
+
+volumes:
+  mongo_data:
+  rabbitmq_data:
+  chroma_data:
+
+networks:
+  blog_network:
+    driver: bridge

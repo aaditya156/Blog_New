@@ -1,0 +1,26 @@
+{
+  "name": "blog-microservice-monorepo",
+  "version": "1.0.0",
+  "description": "Production-grade microservice-based full-stack blogging platform",
+  "private": true,
+  "workspaces": [
+    "frontend",
+    "services/*"
+  ],
+  "scripts": {
+    "dev:frontend": "npm run dev --prefix frontend",
+    "dev:user": "npm run dev --prefix services/user",
+    "dev:author": "npm run dev --prefix services/author",
+    "dev:blog": "npm run dev --prefix services/blog",
+    "build:frontend": "npm run build --prefix frontend",
+    "build:user": "npm run build --prefix services/user",
+    "build:author": "npm run build --prefix services/author",
+    "build:blog": "npm run build --prefix services/blog",
+    "build": "npm run build:user && npm run build:author && npm run build:blog && npm run build:frontend",
+    "docker:up": "docker-compose up --build",
+    "docker:down": "docker-compose down"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2"
+  }
+}
